@@ -24,7 +24,7 @@ eureka:
 
 # JWT Configuration
 jwt:
-  secret: replace_with_a_very_secret_key_which_is_long_enough
+  secret: ncdsmncsmdncsldncsdlncsldcnsdlncsdlcnsdlcnsdlsdcsmdncsdcndlcsdcsdcsdncsd
   expiration: 86400000 # 24 hours
 
 # Monitoring Configuration

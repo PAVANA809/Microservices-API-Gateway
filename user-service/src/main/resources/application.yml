@@ -26,7 +26,7 @@ eureka:
     preferIpAddress: true
 
 jwt:
-  secret: mySecretKey
+  secret: ncdsmncsmdncsldncsdlncsldcnsdlncsdlcnsdlcnsdlsdcsmdncsdcndlcsdcsdcsdncsd
 
 # Monitoring Configuration
 management:

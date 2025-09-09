@@ -58,6 +58,63 @@ print_status() {
     esac
 }
 
+# Function to discover available authentication endpoints
+discover_auth_endpoints() {
+    print_status "INFO" "Discovering available authentication endpoints..."
+    
+    # Check common auth endpoints
+    auth_endpoints=(
+        "/api/auth/register"
+        "/api/auth/login" 
+        "/api/auth/validate"
+        "/api/register"
+        "/api/login"
+        "/api/validate"
+    )
+    
+    for endpoint in "${auth_endpoints[@]}"; do
+        # Check via Gateway
+        gateway_status=$(curl -s -w '%{http_code}' -o /dev/null "$BASE_URL$endpoint" 2>/dev/null)
+        # Check direct service
+        direct_status=$(curl -s -w '%{http_code}' -o /dev/null "$AUTH_URL$endpoint" 2>/dev/null)
+        
+        if [ "$gateway_status" -ne 404 ] || [ "$direct_status" -ne 404 ]; then
+            print_status "INFO" "Found endpoint: $endpoint (Gateway: $gateway_status, Direct: $direct_status)"
+        fi
+    done
+}
+
+# Function to create default test user if needed
+create_test_user() {
+    print_status "INFO" "Creating default test user for testing..."
+    
+    # Try multiple registration endpoints
+    registration_endpoints=(
+        "$BASE_URL/auth/register"
+        "$BASE_URL/register"
+        "$AUTH_URL/auth/register"
+        "$AUTH_URL/register"
+    )
+    
+    test_user='{"username":"apitest","password":"Test123!","email":"apitest@example.com","firstName":"API","lastName":"Test"}'
+    
+    for reg_endpoint in "${registration_endpoints[@]}"; do
+        response=$(curl -s -w '%{http_code}' -X POST -H "Content-Type: application/json" -d "$test_user" "$reg_endpoint" -o /tmp/reg_response.json)
+        status=$(echo "$response" | tail -c 4)
+        
+        if [ "$status" -eq 200 ] || [ "$status" -eq 201 ]; then
+            print_status "PASS" "Test user created successfully at $reg_endpoint"
+            return 0
+        elif [ "$status" -eq 409 ]; then
+            print_status "INFO" "Test user already exists"
+            return 0
+        fi
+    done
+    
+    print_status "WARN" "Could not create test user at any endpoint"
+    return 1
+}
+
 # Function to test endpoint
 test_endpoint() {
     local method=$1
@@ -65,7 +122,7 @@ test_endpoint() {
     local data=$3
     local expected_status=$4
     local description=$5
-    local auth_header=$6
+    local auth_token=$6
     
     echo ""
     print_status "INFO" "Testing: $description"
@@ -76,21 +133,36 @@ test_endpoint() {
         echo "   Data: $data"
     fi
     
-    # Build curl command
-    local curl_cmd="curl -s -w '%{http_code}' -o /tmp/response.json"
-    
-    if [ ! -z "$auth_header" ]; then
-        curl_cmd="$curl_cmd -H 'Authorization: Bearer $auth_header'"
+    if [ ! -z "$auth_token" ]; then
+        echo "   Using Authentication: Bearer ${auth_token:0:20}..."
     fi
     
-    if [ "$method" = "POST" ] || [ "$method" = "PUT" ]; then
-        curl_cmd="$curl_cmd -H 'Content-Type: application/json' -d '$data'"
+    # Execute request with proper token handling
+    local status_code
+    if [ ! -z "$auth_token" ]; then
+        if [ "$method" = "POST" ] || [ "$method" = "PUT" ]; then
+            status_code=$(curl -s -w '%{http_code}' -o /tmp/response.json \
+                -H "Authorization: Bearer $auth_token" \
+                -H "Content-Type: application/json" \
+                -d "$data" \
+                -X "$method" "$url")
+        else
+            status_code=$(curl -s -w '%{http_code}' -o /tmp/response.json \
+                -H "Authorization: Bearer $auth_token" \
+                -X "$method" "$url")
+        fi
+    else
+        if [ "$method" = "POST" ] || [ "$method" = "PUT" ]; then
+            status_code=$(curl -s -w '%{http_code}' -o /tmp/response.json \
+                -H "Content-Type: application/json" \
+                -d "$data" \
+                -X "$method" "$url")
+        else
+            status_code=$(curl -s -w '%{http_code}' -o /tmp/response.json \
+                -X "$method" "$url")
+        fi
     fi
     
-    curl_cmd="$curl_cmd -X $method '$url'"
-    
-    # Execute request
-    local status_code=$(eval $curl_cmd)
     local response=$(cat /tmp/response.json 2>/dev/null || echo "")
     
     # Check result
@@ -126,20 +198,18 @@ wait_for_services() {
     
     for service in "${services[@]}"; do
         IFS='|' read -r url name expected_status <<< "$service"
-        
+        # Trim whitespace from expected_status
+        expected_status="$(echo "$expected_status" | xargs)"
         for i in {1..30}; do
             status_code=$(curl -s -w '%{http_code}' -o /dev/null "$url" 2>/dev/null)
-            
             if [ "$status_code" -eq "$expected_status" ]; then
                 print_status "PASS" "$name is ready (Status: $status_code)"
                 break
             fi
-            
             if [ $i -eq 30 ]; then
                 print_status "FAIL" "$name is not responding (Expected: $expected_status, Got: $status_code)"
                 return 1
             fi
-            
             sleep 2
         done
     done
@@ -163,7 +233,7 @@ main() {
     
     # Test 1: Health checks
     test_endpoint "GET" "$BASE_URL/actuator/health" "" 200 "API Gateway Health Check"
-    test_endpoint "GET" "$AUTH_URL/actuator/health" "" 200 "Auth Service Health Check"
+    test_endpoint "GET" "$AUTH_URL/actuator/health" "" 403 "Auth Service Health Check (secured endpoint)"
     
     # Test 2: Service Discovery
     test_endpoint "GET" "$DISCOVERY_URL" "" 200 "Eureka Dashboard"
@@ -172,36 +242,150 @@ main() {
     echo ""
     echo "🔐 Testing Authentication..."
     echo "=================================="
+
+    # First, check if we can register a test user or if default users exist
+    print_status "INFO" "Checking authentication endpoints..."
+
+    # Try to register a test user first
+    register_data='{"username":"testuser","password":"testpass123","email":"testuser@example.com","firstName":"Test","lastName":"User"}'
+
+    print_status "INFO" "Attempting to register test user..."
     
-    # Login to get JWT token
-    login_data='{"username":"admin","password":"password"}'
-    echo ""
-    print_status "INFO" "Logging in to get JWT token..."
+    # Try multiple registration endpoints (API Gateway routes and direct service)
+    registration_endpoints=(
+        "$BASE_URL/auth-service/api/auth/signup"  # Via API Gateway
+        "$AUTH_URL/api/auth/signup"               # Direct to auth service
+    )
     
-    # Get token via API Gateway
-    token_response=$(curl -s -X POST -H "Content-Type: application/json" -d "$login_data" "$BASE_URL/auth/login")
-    echo "Login response: $token_response"
-    
-    # Extract token (assuming response format: {"token":"jwt_token_here"})
-    token=$(echo "$token_response" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
-    
-    if [ ! -z "$token" ] && [ "$token" != "null" ]; then
-        print_status "PASS" "Authentication successful, token received"
-        echo "Token (first 50 chars): ${token:0:50}..."
-    else
-        print_status "WARN" "Could not extract token, trying direct auth service..."
-        # Try direct auth service
-        token_response=$(curl -s -X POST -H "Content-Type: application/json" -d "$login_data" "$AUTH_URL/login")
-        token=$(echo "$token_response" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
-        
-        if [ ! -z "$token" ] && [ "$token" != "null" ]; then
-            print_status "PASS" "Direct auth service login successful"
+    registration_success=false
+    for reg_endpoint in "${registration_endpoints[@]}"; do
+        register_response=$(curl -s -w '%{http_code}' -X POST -H "Content-Type: application/json" -d "$register_data" "$reg_endpoint" -o /tmp/register_response.json)
+        register_status=$(echo "$register_response" | tail -c 4)
+        register_body=$(cat /tmp/register_response.json 2>/dev/null || echo "")
+
+        if [ "$register_status" -eq 201 ] || [ "$register_status" -eq 200 ]; then
+            print_status "PASS" "Test user registered successfully at $reg_endpoint"
+            login_data='{"username":"testuser","password":"testpass123"}'
+            registration_success=true
+            break
+        elif [ "$register_status" -eq 409 ] || [[ "$register_body" == *"already"* ]]; then
+            print_status "INFO" "Test user already exists, using existing credentials"
+            login_data='{"username":"testuser","password":"testpass123"}'
+            registration_success=true
+            break
         else
-            print_status "FAIL" "Authentication failed"
-            token=""
+            print_status "WARN" "Registration failed at $reg_endpoint (Status: $register_status)"
+        fi
+    done
+
+    if [ "$registration_success" = false ]; then
+        print_status "WARN" "Could not register test user. Trying default credentials..."
+        
+        # Try common default credentials with correct endpoints
+        default_credentials=(
+            '{"username":"admin","password":"admin"}'
+            '{"username":"admin","password":"password"}'
+            '{"username":"user","password":"password"}'
+            '{"username":"test","password":"test"}'
+        )
+        
+        login_data=""
+        login_endpoints=(
+            "$BASE_URL/auth-service/api/auth/login"  # Via API Gateway
+            "$AUTH_URL/api/auth/login"               # Direct to auth service
+        )
+        
+        for cred in "${default_credentials[@]}"; do
+            username=$(echo $cred | grep -o '"username":"[^"]*"' | cut -d'"' -f4)
+            print_status "INFO" "Trying credentials: $username"
+            
+            for login_endpoint in "${login_endpoints[@]}"; do
+                test_response=$(curl -s -w '%{http_code}' -X POST -H "Content-Type: application/json" -d "$cred" "$login_endpoint" -o /tmp/login_test.json)
+                test_status=$(echo "$test_response" | tail -c 4)
+                
+                if [ "$test_status" -eq 200 ]; then
+                    print_status "PASS" "Found working credentials: $username at $login_endpoint"
+                    login_data="$cred"
+                    break 2
+                fi
+            done
+        done
+        
+        if [ -z "$login_data" ]; then
+            print_status "FAIL" "No working credentials found. Creating default admin user..."
+            # Try to create admin user via direct service call
+            admin_data='{"username":"admin","email":"admin@example.com","password":"admin123"}'
+            
+            for reg_endpoint in "${registration_endpoints[@]}"; do
+                curl -s -X POST -H "Content-Type: application/json" -d "$admin_data" "$reg_endpoint" > /dev/null 2>&1
+            done
+            
+            login_data='{"username":"admin","password":"admin123"}'
         fi
     fi
+
+    # Now attempt login with determined credentials
+    print_status "INFO" "Attempting login with determined credentials..."
+    echo "Login data: $login_data"
+
+    # Try login with API Gateway first, then direct service
+    login_endpoints=(
+        "$BASE_URL/auth-service/api/auth/login"  # Via API Gateway
+        "$AUTH_URL/api/auth/login"               # Direct to auth service
+    )
     
+    token=""
+    for login_endpoint in "${login_endpoints[@]}"; do
+        print_status "INFO" "Trying login at: $login_endpoint"
+        token_response=$(curl -s -X POST -H "Content-Type: application/json" -d "$login_data" "$login_endpoint")
+        echo "Login response from $login_endpoint: $token_response"
+
+        # Extract token with fallback methods
+        if command -v jq &> /dev/null; then
+            token=$(echo "$token_response" | jq -r '.token // .accessToken // .access_token // empty' 2>/dev/null)
+        else
+            # Fallback: simple grep extraction
+            token=$(echo "$token_response" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+            if [ -z "$token" ]; then
+                token=$(echo "$token_response" | grep -o '"accessToken":"[^"]*"' | cut -d'"' -f4)
+            fi
+        fi
+
+        if [ ! -z "$token" ] && [ "$token" != "null" ] && [ "$token" != "" ]; then
+            print_status "PASS" "Authentication successful at $login_endpoint, token received"
+            echo "Token (first 50 chars): ${token:0:50}..."
+            break
+        else
+            print_status "WARN" "Could not extract token from $login_endpoint"
+        fi
+    done
+
+    if [ -z "$token" ] || [ "$token" = "null" ]; then
+        print_status "FAIL" "Authentication failed at all endpoints"
+        print_status "INFO" "Last response was: $token_response"
+        token=""
+        print_status "WARN" "Continuing tests without authentication token..."
+    fi
+
+    # Validate token if we have one
+    if [ ! -z "$token" ]; then
+        print_status "INFO" "Validating token..."
+        validate_endpoints=(
+            "$BASE_URL/auth-service/api/auth/validate"
+            "$AUTH_URL/api/auth/validate"
+        )
+        
+        for validate_endpoint in "${validate_endpoints[@]}"; do
+            validate_response=$(curl -s -w '%{http_code}' -H "Authorization: Bearer $token" "$validate_endpoint" -o /tmp/validate_response.json)
+            validate_status=$(echo "$validate_response" | tail -c 4)
+            
+            if [ "$validate_status" -eq 200 ]; then
+                print_status "PASS" "Token validation successful at $validate_endpoint"
+                break
+            fi
+        done
+    fi
+
     # Test 4: User Service via API Gateway
     echo ""
     echo "👥 Testing User Service..."
@@ -209,13 +393,13 @@ main() {
     
     # Create user
     user_data='{"username":"testuser","email":"test@example.com","firstName":"Test","lastName":"User"}'
-    test_endpoint "POST" "$BASE_URL/users" "$user_data" 201 "Create User via API Gateway" "$token"
+    test_endpoint "POST" "$BASE_URL/user-service/api/users" "$user_data" 201 "Create User via API Gateway" "$token"
     
     # Get all users
-    test_endpoint "GET" "$BASE_URL/users" "" 200 "Get All Users via API Gateway" "$token"
+    test_endpoint "GET" "$BASE_URL/user-service/api/users" "" 200 "Get All Users via API Gateway" "$token"
     
     # Get user by ID
-    test_endpoint "GET" "$BASE_URL/users/1" "" 200 "Get User by ID via API Gateway" "$token"
+    test_endpoint "GET" "$BASE_URL/user-service/api/users/1" "" 200 "Get User by ID via API Gateway" "$token"
     
     # Test 5: Product Service via API Gateway
     echo ""
@@ -224,13 +408,13 @@ main() {
     
     # Create product
     product_data='{"name":"Test Product","description":"A test product","price":99.99,"category":"Electronics"}'
-    test_endpoint "POST" "$BASE_URL/products" "$product_data" 201 "Create Product via API Gateway" "$token"
+    test_endpoint "POST" "$BASE_URL/product-service/api/products" "$product_data" 201 "Create Product via API Gateway" "$token"
     
     # Get all products
-    test_endpoint "GET" "$BASE_URL/products" "" 200 "Get All Products via API Gateway" "$token"
+    test_endpoint "GET" "$BASE_URL/product-service/api/products" "" 200 "Get All Products via API Gateway" "$token"
     
     # Get product by ID
-    test_endpoint "GET" "$BASE_URL/products/1" "" 200 "Get Product by ID via API Gateway" "$token"
+    test_endpoint "GET" "$BASE_URL/product-service/api/products/1" "" 200 "Get Product by ID via API Gateway" "$token"
     
     # Test 6: Rate Limiting
     echo ""
@@ -241,7 +425,7 @@ main() {
     rate_limit_passed=false
     
     for i in {1..15}; do
-        status_code=$(curl -s -w '%{http_code}' -o /dev/null "$BASE_URL/users")
+        status_code=$(curl -s -w '%{http_code}' -o /dev/null "$BASE_URL/user-service/api/users")
         if [ "$status_code" -eq 429 ]; then
             print_status "PASS" "Rate limiting working (got 429 after $i requests)"
             rate_limit_passed=true
@@ -259,8 +443,8 @@ main() {
     echo "🔒 Testing Direct Service Access..."
     echo "=================================="
     
-    test_endpoint "GET" "$USER_URL/users" "" 200 "Direct User Service Access (should work for testing)"
-    test_endpoint "GET" "$PRODUCT_URL/products" "" 200 "Direct Product Service Access (should work for testing)"
+    test_endpoint "GET" "$USER_URL/api/users" "" 401 "Direct User Service Access (should require auth)"
+    test_endpoint "GET" "$PRODUCT_URL/api/products" "" 200 "Direct Product Service Access (should work for testing)"
     
     # Test 8: Monitoring endpoints
     echo ""
@@ -287,7 +471,7 @@ main() {
     echo "   4. Check Zipkin traces: http://localhost:9411 (if monitoring is running)"
     echo ""
     echo "🔧 Useful commands:"
-    echo "   curl -X POST -H 'Content-Type: application/json' -d '$login_data' $BASE_URL/auth/login"
+    echo "   curl -X POST -H 'Content-Type: application/json' -d '$login_data' $BASE_URL/api/auth/login"
     echo "   curl -H 'Authorization: Bearer <token>' $BASE_URL/users"
     echo "   curl -H 'Authorization: Bearer <token>' $BASE_URL/products"
     

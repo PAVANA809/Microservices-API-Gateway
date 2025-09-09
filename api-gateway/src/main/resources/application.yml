@@ -10,11 +10,28 @@ spring:
         locator:
           enabled: true
           lower-case-service-id: true
-      default-filters:
-        - name: RequestRateLimiter
-          args:
-            '[redis-rate-limiter.replenishRate]': 10
-            '[redis-rate-limiter.burstCapacity]': 20
+      routes:
+        # User service route (no rate limiting for now)
+        - id: user-service-custom
+          uri: lb://USER-SERVICE
+          predicates:
+            - Path=/user-service/**
+          filters:
+            - RewritePath=/user-service/?(?<remaining>.*), /$\{remaining}
+        # Product service route (no rate limiting for now) 
+        - id: product-service-custom
+          uri: lb://PRODUCT-SERVICE
+          predicates:
+            - Path=/product-service/**
+          filters:
+            - RewritePath=/product-service/?(?<remaining>.*), /$\{remaining}
+        # Auth service without rate limiting for login/signup
+        - id: auth-service-no-limit
+          uri: lb://AUTH-SERVICE
+          predicates:
+            - Path=/auth-service/**
+          filters:
+            - RewritePath=/auth-service/?(?<remaining>.*), /$\{remaining}
   data:
     redis:
       host: localhost
