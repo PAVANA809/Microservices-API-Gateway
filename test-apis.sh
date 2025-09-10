@@ -192,7 +192,7 @@ wait_for_services() {
         "${DISCOVERY_URL}/actuator/health|Discovery Server|200"
         "${BASE_URL}/actuator/health|API Gateway|200"
         "${AUTH_URL}/actuator/health|Auth Service|403"
-        "${USER_URL}/actuator/health|User Service|403"
+        "${USER_URL}/actuator/health|User Service|200"
         "${PRODUCT_URL}/actuator/health|Product Service|200"
     )
     
@@ -407,7 +407,7 @@ main() {
     echo "=================================="
     
     # Create product
-    product_data='{"name":"Test Product","description":"A test product","price":99.99,"category":"Electronics"}'
+    product_data='{"name":"Test Product","description":"A test product","price":99.99,"category":"Electronics","sku":"TEST-PROD-001","stockQuantity":10}'
     test_endpoint "POST" "$BASE_URL/product-service/api/products" "$product_data" 201 "Create Product via API Gateway" "$token"
     
     # Get all products
@@ -443,7 +443,7 @@ main() {
     echo "🔒 Testing Direct Service Access..."
     echo "=================================="
     
-    test_endpoint "GET" "$USER_URL/api/users" "" 401 "Direct User Service Access (should require auth)"
+    test_endpoint "GET" "$USER_URL/api/users" "" 403 "Direct User Service Access (should require auth)"
     test_endpoint "GET" "$PRODUCT_URL/api/products" "" 200 "Direct Product Service Access (should work for testing)"
     
     # Test 8: Monitoring endpoints

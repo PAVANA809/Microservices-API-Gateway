@@ -62,10 +62,25 @@ public class JwtUtil {
     }
 
     /**
-     * Validate token
+     * Validate token - checks signature, expiration, and structure
+     */
+    public Boolean validateToken(String token) {
+        try {
+            return !isTokenExpired(token);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+    
+    /**
+     * Validate token against specific username (if needed for specific use cases)
      */
     public Boolean validateToken(String token, String username) {
-        final String extractedUsername = extractUsername(token);
-        return (extractedUsername.equals(username) && !isTokenExpired(token));
+        try {
+            final String extractedUsername = extractUsername(token);
+            return (extractedUsername.equals(username) && !isTokenExpired(token));
+        } catch (Exception e) {
+            return false;
+        }
     }
 }
