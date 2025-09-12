@@ -8,17 +8,21 @@ spring:
     gateway:
       discovery:
         locator:
-          enabled: true
+          enabled: false  # Disable to avoid conflicts with manual routes
           lower-case-service-id: true
       routes:
-        # User service route (no rate limiting for now)
         - id: user-service-custom
           uri: lb://USER-SERVICE
           predicates:
             - Path=/user-service/**
           filters:
-            - RewritePath=/user-service/?(?<remaining>.*), /$\{remaining}
-        # Product service route (no rate limiting for now) 
+            - RewritePath=/user-service/(?<remaining>.*), /${remaining}
+            - name: RequestRateLimiter
+              args:
+                '[redis-rate-limiter.replenishRate]': 2
+                '[redis-rate-limiter.burstCapacity]': 4
+                '[redis-rate-limiter.requestedTokens]': 1
+        # Product service route (no rate limiting for now)
         - id: product-service-custom
           uri: lb://PRODUCT-SERVICE
           predicates:
@@ -76,3 +80,5 @@ logging:
     level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
   level:
     '[org.springframework.cloud.gateway]': DEBUG
+    '[org.springframework.cloud.gateway.filter.ratelimit]': DEBUG
+    '[org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter]': DEBUG

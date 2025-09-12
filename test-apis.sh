@@ -421,21 +421,30 @@ main() {
     echo "🚦 Testing Rate Limiting..."
     echo "=================================="
     
-    print_status "INFO" "Making rapid requests to test rate limiting..."
+    print_status "INFO" "Making rapid requests to test rate limiting with authentication..."
     rate_limit_passed=false
     
     for i in {1..15}; do
-        status_code=$(curl -s -w '%{http_code}' -o /dev/null "$BASE_URL/user-service/api/users")
+        if [ ! -z "$token" ]; then
+            status_code=$(curl -s -w '%{http_code}' -o /dev/null -H "Authorization: Bearer $token" "$BASE_URL/user-service/api/users/health")
+        else
+            status_code=$(curl -s -w '%{http_code}' -o /dev/null "$BASE_URL/user-service/api/users/health")
+        fi
+        
+        echo "Request $i: HTTP $status_code"
+        
         if [ "$status_code" -eq 429 ]; then
             print_status "PASS" "Rate limiting working (got 429 after $i requests)"
             rate_limit_passed=true
             break
         fi
+        
+        # Small delay to see rate limiting pattern
         sleep 0.1
     done
     
     if [ "$rate_limit_passed" = false ]; then
-        print_status "WARN" "Rate limiting not triggered or configured differently"
+        print_status "WARN" "Rate limiting not triggered within 15 requests - check configuration"
     fi
     
     # Test 7: Direct service access (should be blocked)
