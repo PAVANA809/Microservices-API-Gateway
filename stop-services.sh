@@ -7,7 +7,7 @@ echo "🛑 Stopping Microservices..."
 # Function to stop a service
 stop_service() {
     local service_name=$1
-    local pid_file="logs/${service_name}.pid"
+    local pid_file="pids/${service_name}.pid"
     
     if [ -f "$pid_file" ]; then
         local pid=$(cat "$pid_file")

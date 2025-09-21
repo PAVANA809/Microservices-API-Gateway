@@ -15,7 +15,7 @@ A comprehensive microservices architecture with API Gateway, service discovery, 
                     │           │           │
             ┌───────▼────┐ ┌────▼─────┐ ┌──▼──────────┐
             │Auth Service│ │User Service│ │Product Service│
-            │(Port 8081) │ │(Port 8082) │ │(Port 8083)  │
+            │(Dynamic)   │ │(Dynamic)   │ │(Dynamic)    │
             └────────────┘ └───────────┘ └─────────────┘
                                 │
                                 │
@@ -30,32 +30,35 @@ A comprehensive microservices architecture with API Gateway, service discovery, 
 
 ### Core Services
 
-1. **Discovery Server** (Port 8761)
+1. **Discovery Server** (Port 8761 - Fixed)
    - Eureka server for service registration and discovery
    - Service health monitoring
    - Load balancing coordination
 
-2. **API Gateway** (Port 8080)
+2. **API Gateway** (Port 8080 - Fixed)
    - Single entry point for all client requests
    - JWT authentication validation
    - Rate limiting and throttling
    - Request routing and load balancing
    - CORS handling
 
-3. **Auth Service** (Port 8081)
+3. **Auth Service** (Dynamic Port - Discovered via Eureka)
    - JWT token generation and validation
    - User authentication
    - Security endpoints
+   - Accessed via Gateway: `http://localhost:8080/auth-service`
 
-4. **User Service** (Port 8082)
+4. **User Service** (Dynamic Port - Discovered via Eureka)
    - User management CRUD operations
    - User profile management
    - Secured with JWT
+   - Accessed via Gateway: `http://localhost:8080/user-service`
 
-5. **Product Service** (Port 8083)
+5. **Product Service** (Dynamic Port - Discovered via Eureka)
    - Product catalog management
    - Product CRUD operations
    - Category management
+   - Accessed via Gateway: `http://localhost:8080/product-service`
 
 ### Monitoring Stack
 
@@ -274,6 +277,11 @@ MicroservicesApiGateway/
 ├── docker-compose-monitoring.yml
 ├── start-services.sh          # Start all services
 ├── stop-services.sh           # Stop all services
+├── service-manager.sh         # Individual service management
+├── test-apis.sh               # API functionality testing
+├── test-load-balancing.sh     # Load balancing tests
+├── setup-load-test.sh         # Load test environment setup
+├── cleanup-load-test.sh       # Load test cleanup
 ├── start-monitoring.sh        # Start monitoring stack
 ├── test-apis.sh               # API testing script
 ├── MONITORING.md              # Monitoring documentation
@@ -357,6 +365,21 @@ cd service-directory && mvn spring-boot:run
 - Gateway uses Spring Cloud LoadBalancer
 - Round-robin distribution by default
 - Health check-based routing
+- Support for multiple service instances
+
+#### Load Balancing Testing
+```bash
+# Setup load test environment
+./setup-load-test.sh
+
+# Run comprehensive load balancing tests
+./test-load-balancing.sh
+
+# Clean up after testing
+./cleanup-load-test.sh
+```
+
+See [LOAD_BALANCING_TESTS.md](LOAD_BALANCING_TESTS.md) for detailed testing guide.
 
 ### Caching
 
@@ -369,6 +392,7 @@ cd service-directory && mvn spring-boot:run
 - Services are stateless (except auth tokens)
 - Can run multiple instances behind load balancer
 - Database should be externalized for production
+- Dynamic port allocation prevents port conflicts
 
 ## 🔄 Development Workflow
 

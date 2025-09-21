@@ -17,6 +17,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+
 
 /**
  * REST Controller for User management
@@ -183,4 +186,10 @@ public class UserController {
         health.put("service", "user-service");
         return ResponseEntity.ok(health);
     }
+
+    @GetMapping("/loadtest")
+    public ResponseEntity<String> loadTest(@org.springframework.beans.factory.annotation.Value("${local.server.port}") int port) {
+        return ResponseEntity.ok("PORT: " + port);
+    }
+    
 }

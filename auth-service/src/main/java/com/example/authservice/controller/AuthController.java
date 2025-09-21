@@ -81,4 +81,13 @@ public class AuthController {
     public ResponseEntity<?> healthCheck() {
         return ResponseEntity.ok("Auth Service is running!");
     }
+
+    /**
+     * Load test endpoint - returns the port of this instance
+     * @return ResponseEntity with the port number
+     */
+    @GetMapping("/loadtest")
+    public ResponseEntity<String> loadTest(@org.springframework.beans.factory.annotation.Value("${local.server.port}") int port) {
+        return ResponseEntity.ok("PORT: " + port);
+    }
 }

@@ -1,33 +1,32 @@
 #!/bin/bash
 
-# Microservices API Testing Script
+# Microservices API Testing Script - Updated for Dynamic Ports
 
 # Dynamic Base URLs using environment variables with fallback to localhost
 API_HOST=${API_HOST:-"localhost"}
 DISCOVERY_HOST=${DISCOVERY_HOST:-"localhost"}
 
-# Port configurations
+# Port configurations - Only Gateway and Discovery use fixed ports
 GATEWAY_PORT=${GATEWAY_PORT:-"8080"}
-AUTH_PORT=${AUTH_PORT:-"8081"}
-USER_PORT=${USER_PORT:-"8082"}
-PRODUCT_PORT=${PRODUCT_PORT:-"8083"}
 DISCOVERY_PORT=${DISCOVERY_PORT:-"8761"}
 
-# Construct URLs
+# Construct URLs - All services accessed through API Gateway except Discovery
 BASE_URL="http://${API_HOST}:${GATEWAY_PORT}"
-AUTH_URL="http://${API_HOST}:${AUTH_PORT}"
-USER_URL="http://${API_HOST}:${USER_PORT}"
-PRODUCT_URL="http://${API_HOST}:${PRODUCT_PORT}"
 DISCOVERY_URL="http://${DISCOVERY_HOST}:${DISCOVERY_PORT}"
+
+# Service endpoints via API Gateway
+AUTH_SERVICE_URL="$BASE_URL/auth-service"
+USER_SERVICE_URL="$BASE_URL/user-service"
+PRODUCT_SERVICE_URL="$BASE_URL/product-service"
 
 echo "🧪 Testing Microservices API..."
 echo ""
 echo "🌐 Configuration:"
 echo "   API Host: ${API_HOST}"
 echo "   Gateway URL: ${BASE_URL}"
-echo "   Auth Service URL: ${AUTH_URL}"
-echo "   User Service URL: ${USER_URL}"
-echo "   Product Service URL: ${PRODUCT_URL}"
+echo "   Auth Service URL (via Gateway): ${AUTH_SERVICE_URL}"
+echo "   User Service URL (via Gateway): ${USER_SERVICE_URL}"
+echo "   Product Service URL (via Gateway): ${PRODUCT_SERVICE_URL}"
 echo "   Discovery URL: ${DISCOVERY_URL}"
 echo ""
 
@@ -62,24 +61,21 @@ print_status() {
 discover_auth_endpoints() {
     print_status "INFO" "Discovering available authentication endpoints..."
     
-    # Check common auth endpoints
+    # Check common auth endpoints via Gateway
     auth_endpoints=(
-        "/api/auth/register"
-        "/api/auth/login" 
-        "/api/auth/validate"
-        "/api/register"
-        "/api/login"
-        "/api/validate"
+        "/auth-service/api/auth/register"
+        "/auth-service/api/auth/login" 
+        "/auth-service/api/auth/validate"
+        "/auth-service/api/register"
+        "/auth-service/api/login"
+        "/auth-service/api/validate"
     )
     
     for endpoint in "${auth_endpoints[@]}"; do
-        # Check via Gateway
         gateway_status=$(curl -s -w '%{http_code}' -o /dev/null "$BASE_URL$endpoint" 2>/dev/null)
-        # Check direct service
-        direct_status=$(curl -s -w '%{http_code}' -o /dev/null "$AUTH_URL$endpoint" 2>/dev/null)
         
-        if [ "$gateway_status" -ne 404 ] || [ "$direct_status" -ne 404 ]; then
-            print_status "INFO" "Found endpoint: $endpoint (Gateway: $gateway_status, Direct: $direct_status)"
+        if [ "$gateway_status" -ne 404 ]; then
+            print_status "INFO" "Found endpoint: $endpoint (Status: $gateway_status)"
         fi
     done
 }
@@ -88,12 +84,10 @@ discover_auth_endpoints() {
 create_test_user() {
     print_status "INFO" "Creating default test user for testing..."
     
-    # Try multiple registration endpoints
+    # Try registration endpoints via API Gateway
     registration_endpoints=(
-        "$BASE_URL/auth/register"
-        "$BASE_URL/register"
-        "$AUTH_URL/auth/register"
-        "$AUTH_URL/register"
+        "$AUTH_SERVICE_URL/api/auth/register"
+        "$AUTH_SERVICE_URL/api/register"
     )
     
     test_user='{"username":"apitest","password":"Test123!","email":"apitest@example.com","firstName":"API","lastName":"Test"}'
@@ -187,13 +181,13 @@ test_endpoint() {
 wait_for_services() {
     echo "⏳ Waiting for services to be ready..."
     
-    # Dynamic service URLs - using | as separator, format: URL|NAME|EXPECTED_STATUS
+    # Service URLs for health checks - only check Gateway and Discovery directly
     services=(
         "${DISCOVERY_URL}/actuator/health|Discovery Server|200"
         "${BASE_URL}/actuator/health|API Gateway|200"
-        "${AUTH_URL}/actuator/health|Auth Service|403"
-        "${USER_URL}/actuator/health|User Service|200"
-        "${PRODUCT_URL}/actuator/health|Product Service|200"
+        "${AUTH_SERVICE_URL}/actuator/health|Auth Service (via Gateway)|200"
+        "${USER_SERVICE_URL}/actuator/health|User Service (via Gateway)|200"
+        "${PRODUCT_SERVICE_URL}/actuator/health|Product Service (via Gateway)|200"
     )
     
     for service in "${services[@]}"; do
@@ -233,7 +227,7 @@ main() {
     
     # Test 1: Health checks
     test_endpoint "GET" "$BASE_URL/actuator/health" "" 200 "API Gateway Health Check"
-    test_endpoint "GET" "$AUTH_URL/actuator/health" "" 403 "Auth Service Health Check (secured endpoint)"
+    test_endpoint "GET" "$AUTH_SERVICE_URL/actuator/health" "" 200 "Auth Service Health Check (via Gateway)"
     
     # Test 2: Service Discovery
     test_endpoint "GET" "$DISCOVERY_URL" "" 200 "Eureka Dashboard"
@@ -251,10 +245,10 @@ main() {
 
     print_status "INFO" "Attempting to register test user..."
     
-    # Try multiple registration endpoints (API Gateway routes and direct service)
+    # Try registration endpoints via API Gateway
     registration_endpoints=(
-        "$BASE_URL/auth-service/api/auth/signup"  # Via API Gateway
-        "$AUTH_URL/api/auth/signup"               # Direct to auth service
+        "$AUTH_SERVICE_URL/api/auth/signup"
+        "$AUTH_SERVICE_URL/api/auth/register"
     )
     
     registration_success=false
@@ -291,8 +285,7 @@ main() {
         
         login_data=""
         login_endpoints=(
-            "$BASE_URL/auth-service/api/auth/login"  # Via API Gateway
-            "$AUTH_URL/api/auth/login"               # Direct to auth service
+            "$AUTH_SERVICE_URL/api/auth/login"
         )
         
         for cred in "${default_credentials[@]}"; do
@@ -313,7 +306,7 @@ main() {
         
         if [ -z "$login_data" ]; then
             print_status "FAIL" "No working credentials found. Creating default admin user..."
-            # Try to create admin user via direct service call
+            # Try to create admin user via Gateway
             admin_data='{"username":"admin","email":"admin@example.com","password":"admin123"}'
             
             for reg_endpoint in "${registration_endpoints[@]}"; do
@@ -328,10 +321,9 @@ main() {
     print_status "INFO" "Attempting login with determined credentials..."
     echo "Login data: $login_data"
 
-    # Try login with API Gateway first, then direct service
+    # Try login via API Gateway
     login_endpoints=(
-        "$BASE_URL/auth-service/api/auth/login"  # Via API Gateway
-        "$AUTH_URL/api/auth/login"               # Direct to auth service
+        "$AUTH_SERVICE_URL/api/auth/login"
     )
     
     token=""
@@ -371,8 +363,7 @@ main() {
     if [ ! -z "$token" ]; then
         print_status "INFO" "Validating token..."
         validate_endpoints=(
-            "$BASE_URL/auth-service/api/auth/validate"
-            "$AUTH_URL/api/auth/validate"
+            "$AUTH_SERVICE_URL/api/auth/validate"
         )
         
         for validate_endpoint in "${validate_endpoints[@]}"; do
@@ -393,10 +384,10 @@ main() {
     
     # Create user
     user_data='{"username":"testuser","email":"test@example.com","firstName":"Test","lastName":"User"}'
-    test_endpoint "POST" "$BASE_URL/user-service/api/users" "$user_data" 201 "Create User via API Gateway" "$token"
+    test_endpoint "POST" "$USER_SERVICE_URL/api/users" "$user_data" 201 "Create User via API Gateway" "$token"
     
     # Get all users
-    test_endpoint "GET" "$BASE_URL/user-service/api/users" "" 200 "Get All Users via API Gateway" "$token"
+    test_endpoint "GET" "$USER_SERVICE_URL/api/users" "" 200 "Get All Users via API Gateway" "$token"
     
     # Get user by ID
     test_endpoint "GET" "$BASE_URL/user-service/api/users/1" "" 200 "Get User by ID via API Gateway" "$token"
@@ -406,15 +397,20 @@ main() {
     echo "📦 Testing Product Service..."
     echo "=================================="
     
+    # Test 5: Product Service via API Gateway
+    echo ""
+    echo "🛍️  Testing Product Service..."
+    echo "=================================="
+    
     # Create product
     product_data='{"name":"Test Product","description":"A test product","price":99.99,"category":"Electronics","sku":"TEST-PROD-001","stockQuantity":10}'
-    test_endpoint "POST" "$BASE_URL/product-service/api/products" "$product_data" 201 "Create Product via API Gateway" "$token"
+    test_endpoint "POST" "$PRODUCT_SERVICE_URL/api/products" "$product_data" 201 "Create Product via API Gateway" "$token"
     
     # Get all products
-    test_endpoint "GET" "$BASE_URL/product-service/api/products" "" 200 "Get All Products via API Gateway" "$token"
+    test_endpoint "GET" "$PRODUCT_SERVICE_URL/api/products" "" 200 "Get All Products via API Gateway" "$token"
     
     # Get product by ID
-    test_endpoint "GET" "$BASE_URL/product-service/api/products/1" "" 200 "Get Product by ID via API Gateway" "$token"
+    test_endpoint "GET" "$PRODUCT_SERVICE_URL/api/products/1" "" 200 "Get Product by ID via API Gateway" "$token"
     
     # Test 6: Rate Limiting
     echo ""
@@ -426,9 +422,9 @@ main() {
     
     for i in {1..15}; do
         if [ ! -z "$token" ]; then
-            status_code=$(curl -s -w '%{http_code}' -o /dev/null -H "Authorization: Bearer $token" "$BASE_URL/user-service/api/users/health")
+            status_code=$(curl -s -w '%{http_code}' -o /dev/null -H "Authorization: Bearer $token" "$USER_SERVICE_URL/api/users/health")
         else
-            status_code=$(curl -s -w '%{http_code}' -o /dev/null "$BASE_URL/user-service/api/users/health")
+            status_code=$(curl -s -w '%{http_code}' -o /dev/null "$USER_SERVICE_URL/api/users/health")
         fi
         
         echo "Request $i: HTTP $status_code"
@@ -447,13 +443,16 @@ main() {
         print_status "WARN" "Rate limiting not triggered within 15 requests - check configuration"
     fi
     
-    # Test 7: Direct service access (should be blocked)
+    # Test 7: Service Discovery Verification
     echo ""
-    echo "🔒 Testing Direct Service Access..."
+    echo "� Testing Service Discovery via Gateway..."
     echo "=================================="
     
-    test_endpoint "GET" "$USER_URL/api/users" "" 403 "Direct User Service Access (should require auth)"
-    test_endpoint "GET" "$PRODUCT_URL/api/products" "" 200 "Direct Product Service Access (should work for testing)"
+    print_status "INFO" "All service calls are now routed through API Gateway"
+    print_status "INFO" "Services are using dynamic ports and discovered via Eureka"
+    test_endpoint "GET" "$AUTH_SERVICE_URL/api/auth/health" "" 200 "Auth Service Health via Gateway"
+    test_endpoint "GET" "$USER_SERVICE_URL/api/users/health" "" 200 "User Service Health via Gateway" "$token"
+    test_endpoint "GET" "$PRODUCT_SERVICE_URL/api/products/health" "" 200 "Product Service Health via Gateway" "$token"
     
     # Test 8: Monitoring endpoints
     echo ""
@@ -462,14 +461,13 @@ main() {
     
     test_endpoint "GET" "$BASE_URL/actuator/metrics" "" 200 "API Gateway Metrics"
     test_endpoint "GET" "$BASE_URL/actuator/prometheus" "" 200 "API Gateway Prometheus Metrics"
-    test_endpoint "GET" "$USER_URL/actuator/metrics" "" 200 "User Service Metrics"
-    test_endpoint "GET" "$PRODUCT_URL/actuator/metrics" "" 200 "Product Service Metrics"
     
     # Summary
     echo ""
     echo "📋 Test Summary"
     echo "=================================="
     print_status "INFO" "API testing completed!"
+    print_status "INFO" "All services are now using dynamic ports and accessed via API Gateway"
     print_status "INFO" "Check the results above for any failures"
     
     echo ""
@@ -480,9 +478,9 @@ main() {
     echo "   4. Check Zipkin traces: http://localhost:9411 (if monitoring is running)"
     echo ""
     echo "🔧 Useful commands:"
-    echo "   curl -X POST -H 'Content-Type: application/json' -d '$login_data' $BASE_URL/api/auth/login"
-    echo "   curl -H 'Authorization: Bearer <token>' $BASE_URL/users"
-    echo "   curl -H 'Authorization: Bearer <token>' $BASE_URL/products"
+    echo "   curl -X POST -H 'Content-Type: application/json' -d '$login_data' $AUTH_SERVICE_URL/api/auth/login"
+    echo "   curl -H 'Authorization: Bearer <token>' $USER_SERVICE_URL/api/users"
+    echo "   curl -H 'Authorization: Bearer <token>' $PRODUCT_SERVICE_URL/api/products"
     
     # Cleanup
     rm -f /tmp/response.json

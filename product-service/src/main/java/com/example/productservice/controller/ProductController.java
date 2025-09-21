@@ -311,4 +311,13 @@ public class ProductController {
         response.put("timestamp", java.time.LocalDateTime.now().toString());
         return new ResponseEntity<>(response, HttpStatus.OK);
     }
+
+    /**
+     * Load test endpoint - returns the port of this instance
+     * GET /api/products/loadtest
+     */
+    @GetMapping("/loadtest")
+    public ResponseEntity<String> loadTest(@org.springframework.beans.factory.annotation.Value("${local.server.port}") int port) {
+        return ResponseEntity.ok("PORT: " + port);
+    }
 }
