@@ -13,10 +13,10 @@ A comprehensive microservices architecture with API Gateway, service discovery, 
                                 │
                     ┌───────────┼───────────┐
                     │           │           │
-            ┌───────▼────┐ ┌────▼─────┐ ┌──▼──────────┐
+            ┌───────▼────┐ ┌────▼───────┐ ┌──▼────────────┐
             │Auth Service│ │User Service│ │Product Service│
-            │(Dynamic)   │ │(Dynamic)   │ │(Dynamic)    │
-            └────────────┘ └───────────┘ └─────────────┘
+            │(Dynamic)   │ │(Dynamic)   │ │(Dynamic)      │
+            └────────────┘ └────────────┘ └───────────────┘
                                 │
                                 │
                     ┌───────────▼───────────┐
